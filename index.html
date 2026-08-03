@@ -1718,11 +1718,13 @@ const Store = {
    BAGIAN 4 — MODEL DATA & STATE
    ══════════════════════════════════════════════════════════════════════════ */
 function pokFromSeed(){
-  return POK_2026.map(k=>({k:k.k,n:k.n,p:k.p,sub:k.sub.map(s=>({
+  /* Penggolongan diserahkan sepenuhnya kepada lengkapiGolongan agar aturan
+     pos penggunaan dan pengecualian pagu kelola hanya ada di satu tempat. */
+  return lengkapiGolongan(POK_2026.map(k=>({k:k.k,n:k.n,p:k.p,sub:k.sub.map(s=>({
     k:s.k,n:s.n,p:s.p,bid:s.bid,sas:s.sas,
     ak:s.ak.map(a=>({k:a.k,n:a.n,p:a.p,sd:a.sd,it:a.it.map(i=>({u:i.u,v:i.v,h:i.h,j:i.j}))})),
-    rz:[0,0,0,0], pos:BID_KE_POS[s.bid]||'b_otl', kel:subKelBaku({n:s.n,bid:s.bid,pos:BID_KE_POS[s.bid]}), kunci:subDikunci({n:s.n})||undefined
-  }))}));
+    rz:[0,0,0,0]
+  }))})));
 }
 
 function tahunKosong(y){
@@ -1829,11 +1831,36 @@ const POS_TERPUSAT_BAKU = ['b_tdk','b_opb','b_otl','b_pnl','b_pkm','i_sar','i_pr
 
 /* Honor yang tetap menjadi pagu kelola fakultas walau tergolong biaya dosen.
    Dikunci agar tidak ikut berpindah ketika penggolongan baku diterapkan ulang. */
-const KUNCI_FAKULTAS = ['dosen luar biasa','luar biasa','kelebihan jam mengajar','kjm','kelebihan jam'];
-function subDikunci(s){
+/* Kegiatan yang menurut ketentuan fakultas tetap menjadi pagu kelola meskipun
+   pos penggunaannya tergolong terpusat. Setiap butir membawa alasannya sendiri
+   agar pengecualian ini dapat ditelusuri asesor dan auditor.                    */
+const KUNCI_FAKULTAS = [
+  {kode:'KF-1', kata:['dosen luar biasa','luar biasa'],
+   nama:'Honor Dosen Luar Biasa',
+   alasan:'Honor dosen luar biasa dikecualikan dari pos Biaya Dosen yang bersifat terpusat, sebab pengangkatan dan pembayarannya menjadi kewenangan belanja fakultas.'},
+  {kode:'KF-2', kata:['kelebihan jam mengajar','kelebihan jam','kjm'],
+   nama:'Honor Kelebihan Jam Mengajar',
+   alasan:'Honor kelebihan jam mengajar dikecualikan dari pos Biaya Dosen yang bersifat terpusat, sebab perhitungan dan pembayarannya menjadi kewenangan belanja fakultas.'},
+  {kode:'KF-3', kata:['penghargaan publikasi','publikasi ilmiah'],
+   nama:'Penghargaan Publikasi Ilmiah',
+   alasan:'Penghargaan publikasi ilmiah dianggarkan dan dieksekusi langsung oleh fakultas melalui Petunjuk Operasional Kegiatan, terpisah dari hibah penelitian yang dikelola Lembaga Penelitian dan Pengabdian kepada Masyarakat.'},
+  {kode:'KF-4', kata:['aicief','annual international conference','international conference on islamic economics'],
+   nama:'Annual International Conference on Islamic Economics and Finance',
+   alasan:'Penyelenggaraan AICIEF merupakan kegiatan fakultas yang dibiayai dari pagu kelola pada Petunjuk Operasional Kegiatan, bukan dari dana penelitian terpusat universitas.'},
+  {kode:'KF-5', kata:['internasionalisasi'],
+   nama:'Dokumen Internasionalisasi Program Studi',
+   alasan:'Penyusunan dokumen internasionalisasi program studi dianggarkan dan dilaksanakan sendiri oleh fakultas melalui Petunjuk Operasional Kegiatan, sehingga bukan belanja operasional tidak langsung yang dikelola universitas.'},
+  {kode:'KF-6', kata:['penguatan kompetensi','kompetensi tenaga pendidik','kompetensi dosen','peningkatan kompetensi'],
+   nama:'Penguatan Kompetensi Tenaga Pendidik dan Kependidikan',
+   alasan:'Peningkatan kompetensi dosen dan tenaga kependidikan dibiayai dari pagu kelola fakultas pada Petunjuk Operasional Kegiatan, terpisah dari investasi sumber daya manusia yang dibiayai terpusat oleh universitas.'}
+];
+/* Kembalikan butir pengecualian yang cocok, atau nol bila tidak ada */
+function kunciFakultas(s){
   const t=String((s&&s.n)||'').toLowerCase();
-  return KUNCI_FAKULTAS.some(k=>t.indexOf(k)>=0);
+  for(const k of KUNCI_FAKULTAS){ if(k.kata.some(x=>t.indexOf(x)>=0)) return k; }
+  return null;
 }
+function subDikunci(s){ return !!kunciFakultas(s); }
 function subPosBaku(s){
   const p=BID_KE_POS[s&&s.bid]; return POS_MAP[p]? p : 'b_otl';
 }
@@ -1847,7 +1874,9 @@ function lengkapiGolongan(pok){
   (pok||[]).forEach(k=>(k.sub||[]).forEach(s=>{
     if(!POS_MAP[s.pos]) s.pos = subPosBaku(s);
     if(s.kel!=='fakultas' && s.kel!=='terpusat') s.kel = subKelBaku(s);
-    if(subDikunci(s)){ s.kunci = true; s.kel = 'fakultas'; } else delete s.kunci;
+    const kf = kunciFakultas(s);
+    if(kf){ s.kunci = true; s.kunciKode = kf.kode; s.kel = 'fakultas'; }
+    else { delete s.kunci; delete s.kunciKode; }
   }));
   return pok;
 }
@@ -2489,13 +2518,47 @@ const Calc = {
           rp(sum(disesuaikan.map(x=>x.p)))+'. Rinciannya: '+disesuaikan.slice(0,6).map(x=>x.k+' '+x.n.slice(0,34)+' ('+x.kel+')').join('; ')+
           (disesuaikan.length>6? ' dan '+(disesuaikan.length-6)+' lainnya.' : '.'),
           'Sertakan alasan penyesuaian pada berita acara penyusunan anggaran, dan lampirkan rekap relokasi dari laman Dana Alokasi Terpusat sebagai bukti audit.');
-      const dlb=[]; this.T(y).pok.forEach(k=>k.sub.forEach(s=>{ if(s.kunci) dlb.push(s); }));
-      if(dlb.length)
-        push('observasi','REL-03','Honor dosen luar biasa dan kelebihan jam mengajar tetap pada pagu kelola',
-          dlb.length+' sub-kegiatan bernilai '+rp(sum(dlb.map(x=>num(x.p))))+' dikunci sebagai pagu kelola fakultas sesuai ketentuan, '+
-          'sehingga tidak ikut berpindah ketika penggolongan baku diterapkan ulang.',
-          'Pertahankan pengecualian ini agar beban mengajar tambahan tetap tercatat sebagai kewenangan belanja fakultas.');
+      const dlb=[]; this.T(y).pok.forEach(k=>k.sub.forEach(s=>{ if(s.kunci) dlb.push({k:k.k+'/'+s.k, s:s}); }));
+      if(dlb.length){
+        const perKode={};
+        dlb.forEach(x=>{ const kd=x.s.kunciKode||'KF-?'; (perKode[kd]=perKode[kd]||[]).push(x); });
+        const uraian = Object.keys(perKode).map(kd=>{
+          const kf=KUNCI_FAKULTAS.find(z=>z.kode===kd)||{nama:'Pengecualian',alasan:''};
+          const nilai=sum(perKode[kd].map(x=>num(x.s.p)));
+          return kf.nama+' ('+perKode[kd].map(x=>x.k).join(', ')+') sebesar '+rp(nilai)+' — '+kf.alasan;
+        }).join(' ');
+        push('observasi','REL-03','Kegiatan yang dikecualikan tetap menjadi pagu kelola fakultas',
+          dlb.length+' sub-kegiatan bernilai '+rp(sum(dlb.map(x=>num(x.s.p))))+' dikunci sebagai pagu kelola sesuai ketentuan fakultas, '+
+          'sehingga tidak ikut berpindah ketika penggolongan baku diterapkan ulang. Rinciannya: '+uraian,
+          'Pertahankan pengecualian ini dan lampirkan dasar penetapannya pada berita acara penyusunan anggaran agar dapat ditelusuri asesor.');
+        /* Sorot khusus pengecualian pada bidang penelitian, sebab pos ini paling sering dipersoalkan */
+        const pnlKunci = dlb.filter(x=>this.subPos(x.s)==='b_pnl');
+        if(pnlKunci.length)
+          push('observasi','REL-04','Sebagian biaya penelitian bersumber dari pagu kelola fakultas',
+            'Dari total biaya penelitian '+rp(this.paguBidangTotal(y).pnl)+', sebesar '+rp(sum(pnlKunci.map(x=>num(x.s.p))))+
+            ' dianggarkan langsung oleh fakultas melalui POK ('+pnlKunci.map(x=>x.s.n).join('; ')+'), sedangkan sisanya '+
+            rp(this.paguBidangPusat(y).pnl)+' berupa hibah yang dikelola Lembaga Penelitian dan Pengabdian kepada Masyarakat universitas.',
+            'Cantumkan pemisahan sumber ini pada Laporan Evaluasi Diri agar porsi kemandirian fakultas dalam pembiayaan penelitian terbaca jelas.');
+      }
     }
+
+    /* E1d. Sub-kegiatan POK yang masih digolongkan terpusat perlu ditinjau berkala */
+    (function(){
+      const sisa=[]; Calc.T(y).pok.forEach(k=>k.sub.forEach(s=>{ if(Calc.subKel(s)==='terpusat') sisa.push({k:k.k+'/'+s.k, s:s}); }));
+      if(!sisa.length){
+        if(Calc.pokTotal(y))
+          push('observasi','REL-05','Seluruh isi POK tergolong pagu kelola fakultas',
+            'Tidak ada satu pun sub-kegiatan pada Petunjuk Operasional Kegiatan TA '+y+' yang digolongkan sebagai dana alokasi terpusat. '+
+            'Seluruh dana terpusat sebesar '+rp(Calc.pusatLuarTot(y))+' berasal dari belanja universitas di luar POK.',
+            'Pertahankan pemisahan ini agar pagu kelola fakultas terbaca utuh pada dokumen akreditasi.');
+        return;
+      }
+      push('minor','REL-05','Sub-kegiatan POK yang masih digolongkan terpusat',
+        sisa.length+' sub-kegiatan bernilai '+rp(sum(sisa.map(x=>num(x.s.p))))+' masih digolongkan sebagai dana alokasi terpusat meskipun tercantum pada Petunjuk Operasional Kegiatan, yaitu: '+
+        sisa.map(x=>x.k+' '+x.s.n+' ('+rp(x.s.p)+')').join('; ')+'. '+
+        'Penggolongan ini mengurangi angka pagu kelola fakultas yang dilaporkan.',
+        'Tinjau apakah kegiatan tersebut memang diarahkan universitas. Bila pelaksanaannya sepenuhnya menjadi kewenangan fakultas, pindahkan ke kolom Pagu Kelola Fakultas pada laman Dana Alokasi Terpusat, tab Relokasi Pendanaan.');
+    })();
 
     /* E2. Konteks rendahnya dana operasional pendidikan */
     if(K.fakultas.dop < num(A.dop.minim)){
@@ -3611,7 +3674,9 @@ Pages.puRelokasi = function(){
       'ondragstart="Pages.rlMulai(event,\''+esc(d.key)+'\')" ondragend="Pages.rlSelesai(event)">'+
       '<div class="rl-kh">'+
         '<span class="kode">'+esc(d.k.k)+'/'+esc(s.k)+'</span>'+
-        (s.kunci? '<span class="rl-kunci" title="Menurut ketentuan fakultas, honor ini tetap menjadi pagu kelola dan tidak dapat dipindahkan">'+svgIc('shield','',11)+'terkunci</span>':'')+
+        (s.kunci? (function(){ const kf=KUNCI_FAKULTAS.find(x=>x.kode===s.kunciKode)||kunciFakultas(s)||{};
+          return '<span class="rl-kunci" title="'+esc((kf.nama? kf.nama+' — ':'')+(kf.alasan||'Tetap menjadi pagu kelola fakultas dan tidak dapat dipindahkan.'))+'">'+
+            svgIc('shield','',11)+'terkunci</span>'; })() :'')+
         (s.kelManual && !s.kunci? '<span class="rl-tag">disesuaikan</span>':'')+
         '<b>'+fmt(s.p)+'</b>'+
       '</div>'+
@@ -3646,7 +3711,10 @@ Pages.puRelokasi = function(){
   return notice('i','Cara kerja relokasi',
     'Seluruh isi Petunjuk Operasional Kegiatan pada dasarnya merupakan pagu kelola fakultas. Sebagian pos digolongkan sebagai dana alokasi terpusat karena sifat belanjanya ditetapkan universitas, '+
     'yaitu biaya penelitian, pengabdian kepada masyarakat, gaji dosen dan tenaga kependidikan, operasional pembelajaran, operasional tidak langsung, serta investasi sarana dan prasarana. '+
-    'Honor Dosen Luar Biasa dan honor Kelebihan Jam Mengajar dikecualikan dan tetap menjadi pagu kelola fakultas, sehingga dikunci pada kolom kiri. '+
+    'Sejumlah kegiatan dikecualikan dan tetap menjadi pagu kelola fakultas, sehingga dikunci pada kolom kiri: honor Dosen Luar Biasa, honor Kelebihan Jam Mengajar, '+
+    'Penghargaan Publikasi Ilmiah, Annual International Conference on Islamic Economics and Finance, Dokumen Internasionalisasi Program Studi, '+
+    'serta Penguatan Kompetensi Tenaga Pendidik dan Kependidikan. Kegiatan-kegiatan tersebut memang tergolong pos penggunaan yang lazimnya terpusat, '+
+    'namun seluruhnya dianggarkan dan dieksekusi langsung oleh fakultas melalui Petunjuk Operasional Kegiatan. Dasar setiap pengecualian dapat dibaca pada keterangan kartu yang terkunci. '+
     'Seret kartu antarkolom, atau tekan tombol panah pada kartu, untuk menyesuaikan penggolongan. Perubahan langsung mengalir ke bidang alokasi, distribusi prodi, rasio kecukupan, Tabel 6, temuan audit, dan seluruh laporan.')+
 
   '<div class="grid g4 mt">'+
@@ -5926,7 +5994,17 @@ const Report = {
       B.push(Doc.p('Seluruh isi Petunjuk Operasional Kegiatan pada dasarnya merupakan pagu kelola '+IDENT.fakultas+
         '. Sebagian pos digolongkan sebagai dana alokasi terpusat karena sifat belanjanya ditetapkan universitas, yaitu biaya penelitian, '+
         'pengabdian kepada masyarakat, gaji dosen dan tenaga kependidikan, biaya operasional pembelajaran, biaya operasional tidak langsung, '+
-        'serta investasi sarana dan prasarana. Honor Dosen Luar Biasa dan honor Kelebihan Jam Mengajar dikecualikan dan tetap menjadi pagu kelola fakultas.'));
+        'serta investasi sarana dan prasarana. Terhadap ketentuan tersebut berlaku sejumlah pengecualian yang tetap menjadi pagu kelola fakultas.'));
+      (function(){
+        const kc=[]; Calc.T(y).pok.forEach(k=>k.sub.forEach(s=>{ if(s.kunci) kc.push({k:k.k+'/'+s.k, s:s}); }));
+        if(!kc.length) return;
+        B.push(Doc.p('Pengecualian yang berlaku beserta dasarnya:'));
+        B.push(Doc.tbl([['Kode','Sub-Kegiatan','Pos Penggunaan','Pagu (Rp)','Dasar Pengecualian']],
+          kc.map(x=>{ const kf=KUNCI_FAKULTAS.find(z=>z.kode===x.s.kunciKode)||{alasan:'—'};
+            return [{v:x.k,a:'c'}, x.s.n, (POS_MAP[Calc.subPos(x.s)]||{}).nama||'-',
+                    {v:fmt(x.s.p),a:'r'}, kf.alasan]; }),
+          ['c','l','l','r','l'],[8,22,16,13,41]));
+      })();
       B.push(Doc.tbl([['Golongan Pendanaan','Sumber','Nilai (Rp)','Porsi']],
         [['Pagu kelola fakultas','Petunjuk Operasional Kegiatan',{v:fmt(Calc.paguKelolaTot(y)),a:'r'},{v:pctS(Calc.paguKelolaTot(y),Calc.grandTotal(y)||1,2),a:'r'}],
          ['Dana alokasi terpusat','Bagian yang tercantum pada POK',{v:fmt(Calc.pokTerpusatTot(y)),a:'r'},{v:pctS(Calc.pokTerpusatTot(y),Calc.grandTotal(y)||1,2),a:'r'}],
